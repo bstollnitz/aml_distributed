@@ -9,8 +9,9 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
 
-def fit(device: str, dataloader: DataLoader[torch.Tensor], model: nn.Module,
-        loss_fn: CrossEntropyLoss, optimizer: Optimizer) -> tuple[float, float]:
+def fit(device: torch.device, dataloader: DataLoader[torch.Tensor],
+        model: nn.Module, loss_fn: CrossEntropyLoss,
+        optimizer: Optimizer) -> tuple[float, float]:
     """
     Trains the given model for a single epoch.
     """
@@ -53,7 +54,7 @@ def _fit_one_batch(x: torch.Tensor, y: torch.Tensor, model: nn.Module,
     return (y_prime, loss)
 
 
-def evaluate(device: str, dataloader: DataLoader[torch.Tensor],
+def evaluate(device: torch.device, dataloader: DataLoader[torch.Tensor],
              model: nn.Module,
              loss_fn: CrossEntropyLoss) -> tuple[float, float]:
     """

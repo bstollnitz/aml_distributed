@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -10,12 +11,11 @@ import numpy as np
 import torch
 from mlflow.models.signature import ModelSignature
 from mlflow.types.schema import ColSpec, Schema, TensorSpec
+from neural_network import NeuralNetwork
 from torch import nn
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets
 from torchvision.transforms import ToTensor
-
-from neural_network import NeuralNetwork
 from utils_train_nn import evaluate, fit
 
 DATA_DIR = "aml_distributed/data"
@@ -24,7 +24,8 @@ MODEL_DIR = "aml_distributed/model/"
 
 def load_train_val_data(
     data_dir: str, batch_size: int, training_fraction: float
-) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor]]:
+) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor],
+           torch.utils.data.distributed.DistributedSampler]:
     """
     Returns two DataLoader objects that wrap training and validation data.
     Training and validation data are extracted from the full original training
@@ -39,10 +40,13 @@ def load_train_val_data(
     val_len = full_train_len - train_len
     (train_data, val_data) = random_split(dataset=full_train_data,
                                           lengths=[train_len, val_len])
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_data)
+    train_loader = DataLoader(train_data,
+                              batch_size=batch_size,
+                              sampler=train_sampler)
     val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=True)
 
-    return (train_loader, val_loader)
+    return (train_loader, val_loader, train_sampler)
 
 
 def save_model(model_dir: str, model: nn.Module) -> None:
@@ -67,7 +71,8 @@ def save_model(model_dir: str, model: nn.Module) -> None:
                               signature=signature)
 
 
-def train(data_dir: str, model_dir: str, device: str) -> None:
+def train(data_dir: str, model_dir: str, device: torch.device, rank: int,
+          local_rank: int) -> None:
     """
     Trains the model for a number of epochs, and saves it.
     """
@@ -75,14 +80,16 @@ def train(data_dir: str, model_dir: str, device: str) -> None:
     batch_size = 64
     epochs = 5
 
-    (train_dataloader,
-     val_dataloader) = load_train_val_data(data_dir, batch_size, 0.8)
-    model = NeuralNetwork()
+    (train_dataloader, val_dataloader,
+     train_sampler) = load_train_val_data(data_dir, batch_size, 0.8)
+    model = nn.parallel.DistributedDataParallel(
+        module=NeuralNetwork().to(device), device_ids=[local_rank])
     loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
     for epoch in range(epochs):
         logging.info("Epoch %d", epoch + 1)
+        train_sampler.set_epoch(epoch)
         (training_loss, training_accuracy) = fit(device, train_dataloader,
                                                  model, loss_fn, optimizer)
         (validation_loss,
@@ -96,7 +103,8 @@ def train(data_dir: str, model_dir: str, device: str) -> None:
         }
         mlflow.log_metrics(metrics, step=epoch)
 
-    save_model(model_dir, model)
+    if rank == 0:
+        save_model(model_dir, model)
 
 
 def main() -> None:
@@ -108,9 +116,15 @@ def main() -> None:
     args = parser.parse_args()
     logging.info("input parameters: %s", vars(args))
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Get PyTorch environment variables for distributed training.
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
 
-    train(**vars(args), device=device)
+    device = torch.device("cuda", local_rank)
+
+    torch.distributed.init_process_group(backend="nccl", init_method="env://")
+
+    train(**vars(args), device=device, rank=rank, local_rank=local_rank)
 
 
 if __name__ == "__main__":
