@@ -1,4 +1,4 @@
-name: <GITHUB_REPOSITORY>
+name: aml_distributed
 channels:
   - anaconda
   - pytorch
