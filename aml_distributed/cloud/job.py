@@ -3,13 +3,10 @@
 import logging
 from pathlib import Path
 
-from azure.ai.ml import MLClient, Input, Output, command
+from azure.ai.ml import MLClient, Output, PyTorchDistribution, command
 from azure.ai.ml.constants import AssetTypes
+from azure.ai.ml.entities import AmlCompute, Environment, Model
 from azure.identity import DefaultAzureCredential
-from azure.ai.ml.entities import (AmlCompute, Data, Environment, Model)
-from azure.ai.ml import PyTorchDistribution
-
-from common import MODEL_NAME
 
 COMPUTE_NAME = "cluster-distributed-gpu"
 DATA_NAME = "data-fashion-mnist"
@@ -18,6 +15,7 @@ CONDA_PATH = Path(Path(__file__).parent, "conda.yml")
 CODE_PATH = Path(Path(__file__).parent.parent, "src")
 MODEL_PATH = Path(Path(__file__).parent.parent)
 EXPERIMENT_NAME = "aml_distributed"
+MODEL_NAME = "model-distributed"
 
 
 def main() -> None:
@@ -26,7 +24,6 @@ def main() -> None:
     ml_client = MLClient.from_config(credential=credential)
 
     # Create the compute cluster.
-    # Maximum of 2 nodes of Standard_NC24.
     # Each Standard_NC24 node has 4 NVIDIA Tesla K80 GPUs.
     cluster = AmlCompute(
         name=COMPUTE_NAME,
@@ -38,15 +35,6 @@ def main() -> None:
     )
     ml_client.begin_create_or_update(cluster)
 
-    # Create the data set.
-    dataset = Data(
-        name=DATA_NAME,
-        description="Fashion MNIST data set",
-        path=DATA_PATH.as_posix(),
-        type=AssetTypes.URI_FOLDER,
-    )
-    ml_client.data.create_or_update(dataset)
-
     # Create the environment.
     environment = Environment(image="mcr.microsoft.com/azureml/" +
                               "openmpi4.1.0-cuda11.1-cudnn8-ubuntu20.04:latest",
@@ -56,21 +44,22 @@ def main() -> None:
     # environment variables on each node, in addition to the process-level RANK
     # and LOCAL_RANK environment variables, that are needed for distributed
     # PyTorch training.
+    # We want 4 processes per node/instance.
     distr_config = PyTorchDistribution(process_count_per_instance=4)
 
-    # Create the job.
+    # Notice that we specify that we want two nodes/instances.
+    # 2 instances * 4 processes per instance = 8 total processes.
     job = command(
         description="Trains a simple neural network on the Fashion-MNIST " +
         "dataset.",
         experiment_name=EXPERIMENT_NAME,
         compute=COMPUTE_NAME,
-        inputs=dict(fashion_mnist=Input(path=f"{DATA_NAME}@latest")),
         outputs=dict(model=Output(type=AssetTypes.MLFLOW_MODEL)),
         code=CODE_PATH,
         environment=environment,
+        resources=dict(instance_count=2),
         distribution=distr_config,
-        command="python train.py --data_dir ${{inputs.fashion_mnist}} " +
-        "--model_dir ${{outputs.model}}",
+        command="python train.py " + "--model_dir ${{outputs.model}}",
     )
     job = ml_client.jobs.create_or_update(job)
     ml_client.jobs.stream(job.name)
@@ -80,7 +69,7 @@ def main() -> None:
     model = Model(name=MODEL_NAME,
                   path=model_path,
                   type=AssetTypes.MLFLOW_MODEL)
-    registered_model = ml_client.models.create_or_update(model)
+    ml_client.models.create_or_update(model)
 
 
 if __name__ == "__main__":
