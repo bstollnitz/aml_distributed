@@ -40,15 +40,13 @@ def main() -> None:
                               "openmpi4.1.0-cuda11.1-cudnn8-ubuntu20.04:latest",
                               conda_file=CONDA_PATH)
 
+    # Notice that we specify that we want two nodes/instances, and 4 processes
+    # per node/instance.
+    # 2 instances * 4 processes per instance = 8 total processes.
     # Azure ML will set the MASTER_ADDR, MASTER_PORT, NODE_RANK, WORLD_SIZE
     # environment variables on each node, in addition to the process-level RANK
     # and LOCAL_RANK environment variables, that are needed for distributed
     # PyTorch training.
-    # We want 4 processes per node/instance.
-    distr_config = PyTorchDistribution(process_count_per_instance=4)
-
-    # Notice that we specify that we want two nodes/instances.
-    # 2 instances * 4 processes per instance = 8 total processes.
     job = command(
         description="Trains a simple neural network on the Fashion-MNIST " +
         "dataset.",
@@ -58,7 +56,7 @@ def main() -> None:
         code=CODE_PATH,
         environment=environment,
         resources=dict(instance_count=2),
-        distribution=distr_config,
+        distribution=dict(type="PyTorch", process_count_per_instance=4),
         command="python train.py " + "--model_dir ${{outputs.model}}",
     )
     job = ml_client.jobs.create_or_update(job)
