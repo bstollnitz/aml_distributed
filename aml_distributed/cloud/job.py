@@ -36,9 +36,10 @@ def main() -> None:
     ml_client.begin_create_or_update(cluster)
 
     # Create the environment.
-    environment = Environment(image="mcr.microsoft.com/azureml/" +
-                              "openmpi4.1.0-cuda11.1-cudnn8-ubuntu20.04:latest",
-                              conda_file=CONDA_PATH)
+    environment = "AzureML-ACPT-pytorch-1.12-py39-cuda11.6-gpu@latest"
+    # environment = Environment(image="mcr.microsoft.com/azureml/" +
+    #                           "openmpi4.1.0-cuda11.1-cudnn8-ubuntu20.04:latest",
+    #                           conda_file=CONDA_PATH)
 
     # Notice that we specify that we want two nodes/instances, and 4 processes
     # per node/instance.
